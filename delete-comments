@@ -1,0 +1,224 @@
+function sleep(seconds) {
+    return new Promise(resolve => setTimeout(resolve, seconds * 1000));
+}
+
+async function getDeleteCommentDropdowns() {
+    console.log("Scanning for comment dropdowns...");
+    
+    const dropdowns = document.querySelectorAll('button.artdeco-dropdown__trigger.artdeco-button--tertiary.artdeco-button--circle');
+    
+    const commentDropdowns = Array.from(dropdowns).filter(button => {
+        const svg = button.querySelector('svg[aria-label*="comment"]');
+        return svg !== null;
+    });
+    
+    console.log(`Found ${commentDropdowns.length} comment dropdown buttons`);
+    return commentDropdowns;
+}
+
+async function findDeleteOption() {
+    await sleep(1);
+    
+    const selectors = [
+        '.artdeco-dropdown__content--is-open div[role="menuitem"]',
+        '.artdeco-dropdown__content--is-open .display-flex',
+        '.dropdown-options [role="menuitem"]'
+    ];
+    
+    let deleteOption = null;
+    for (const selector of selectors) {
+        const options = document.querySelectorAll(selector);
+        deleteOption = Array.from(options).find(option => 
+            option.textContent.trim().toLowerCase().includes('delete')
+        );
+        if (deleteOption) break;
+    }
+    
+    console.log(deleteOption ? "Found delete option" : "No delete option found in menu");
+    return deleteOption;
+}
+
+async function getDeleteConfirmationButton() {
+    await sleep(1);
+    
+    const selectors = [
+        'button.artdeco-modal__confirm-dialog-btn',
+        'button.artdeco-button--primary',
+        'button[type="button"][aria-label*="Delete"]'
+    ];
+    
+    let confirmButton = null;
+    for (const selector of selectors) {
+        confirmButton = document.querySelector(selector);
+        if (confirmButton) break;
+    }
+    
+    console.log(confirmButton ? "Found confirmation button" : "No confirmation button found");
+    return confirmButton;
+}
+
+async function deleteComment() {
+    console.log("Attempting to confirm deletion...");
+    const deleteConfirmationButton = await getDeleteConfirmationButton();
+    if (deleteConfirmationButton) {
+        console.log("Clicking confirmation button...");
+        deleteConfirmationButton.click();
+        await sleep(2);
+        return true;
+    } else {
+        console.log("No confirmation button found!");
+        return false;
+    }
+}
+
+async function findAndClickShowMoreButton() {
+    const selectors = [
+        'button.artdeco-button[aria-label*="Show more"]',
+        'button.artdeco-button:not(.artdeco-button--muted)',
+        '.scaffold-finite-scroll__load-button',
+        'button.artdeco-button'
+    ];
+
+    let showMoreButton = null;
+    for (const selector of selectors) {
+        try {
+            const buttons = document.querySelectorAll(selector);
+            showMoreButton = Array.from(buttons).find(button => {
+                const buttonText = button.textContent.trim().toLowerCase();
+                return (buttonText.includes('show more') || buttonText.includes('show additional')) && 
+                       button.offsetParent !== null; // Check if button is visible
+            });
+            if (showMoreButton) break;
+        } catch (error) {
+            console.log(`Error with selector ${selector}:`, error);
+        }
+    }
+
+    if (showMoreButton) {
+        console.log("Found 'Show more results' button, clicking...");
+        showMoreButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await sleep(1);
+        showMoreButton.click();
+        await sleep(3); // Wait for new content to load
+        return true;
+    }
+    return false;
+}
+
+async function scrollToBottom() {
+    const previousHeight = document.documentElement.scrollHeight;
+    window.scrollTo({
+        top: document.documentElement.scrollHeight,
+        behavior: 'smooth'
+    });
+    await sleep(2);
+    
+    // Check if we've actually scrolled (new content loaded)
+    return document.documentElement.scrollHeight > previousHeight;
+}
+
+async function deleteActivity() {
+    const deleteDropdowns = await getDeleteCommentDropdowns();
+    console.log(`Starting to process ${deleteDropdowns.length} comments`);
+    
+    if (deleteDropdowns.length === 0) {
+        console.log("No comment dropdowns found. Attempting to load more...");
+        return false;
+    }
+    
+    for (const dropdown of deleteDropdowns) {
+        try {
+            console.log("Clicking dropdown button...");
+            dropdown.click();
+            await sleep(1.5);
+            
+            const deleteOption = await findDeleteOption();
+            if (deleteOption) {
+                console.log("Found delete option, clicking...");
+                deleteOption.click();
+                await sleep(1.5);
+                const deleted = await deleteComment();
+                if (deleted) {
+                    console.log("Successfully deleted comment");
+                    await sleep(2);
+                }
+            } else {
+                console.log("No delete option found in dropdown!");
+                document.body.click();
+            }
+            
+            await sleep(2);
+        } catch (error) {
+            console.error('Error processing comment:', error);
+            continue;
+        }
+    }
+    
+    return true;
+}
+
+let stopScript = false;
+
+async function init() {
+    console.log("*** Starting comment deletion process ***");
+    console.log("Please make sure you're on the page with your comments.");
+    
+    let consecutiveEmptyAttempts = 0;
+    const MAX_EMPTY_ATTEMPTS = 3;
+    let lastCommentCount = -1;
+
+    while (!stopScript) {
+        try {
+            const currentComments = await getDeleteCommentDropdowns();
+            
+            // If we see the same number of comments after attempting to load more,
+            // increment our counter
+            if (currentComments.length === lastCommentCount) {
+                consecutiveEmptyAttempts++;
+            } else {
+                consecutiveEmptyAttempts = 0;
+            }
+            lastCommentCount = currentComments.length;
+
+            // Stop if we've made several attempts with no new comments
+            if (consecutiveEmptyAttempts >= MAX_EMPTY_ATTEMPTS) {
+                console.log("No new comments found after multiple attempts. Stopping script.");
+                break;
+            }
+
+            // If no comments found, try to load more
+            if (currentComments.length === 0) {
+                const showMoreClicked = await findAndClickShowMoreButton();
+                if (!showMoreClicked) {
+                    const scrolledToNew = await scrollToBottom();
+                    if (!scrolledToNew) {
+                        consecutiveEmptyAttempts++;
+                    }
+                }
+                await sleep(2);
+                continue;
+            }
+
+            // Process current batch of comments
+            await deleteActivity();
+            await sleep(2);
+
+        } catch (error) {
+            console.error('Error in deletion process:', error);
+            break;
+        }
+    }
+    
+    console.log("*** Comment deletion process completed ***");
+}
+
+// Add ability to stop the script
+window.stopCommentDeletion = function() {
+    stopScript = true;
+    console.log("Stopping comment deletion script...");
+};
+
+console.log("Script loaded! Type stopCommentDeletion() to stop the script at any time.");
+
+// Start the deletion process
+init();
