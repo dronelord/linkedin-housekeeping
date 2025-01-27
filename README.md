@@ -111,4 +111,4 @@ This script is provided as-is without any guarantees. Always review the code bef
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed - see the LICENSE file for details.
